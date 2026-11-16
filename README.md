@@ -1,17 +1,90 @@
 # 수능대비 지문분석 앱
 
-영어 지문을 입력하면 수능 대비 학습자료 6종을 자동 생성하는 웹앱 프로젝트입니다.
+영어 지문을 입력하면 수능 대비 학습자료 6종을 자동 생성하는 웹앱입니다.
 
 1. 단어목록
-2. 문장별 해석
+2. 문장별 해석 (자연스러운 해석 + 직독직해)
 3. 중요 문법·구문
-4. 문장구조분석
-5. 수능 유형별 문제
-6. 정답지
+4. 문장구조분석 (S/V/O/C/M 성분, 절, 문장 형식)
+5. 수능 유형별 문제 (14개 유형)
+6. 정답지 (정답, 해설, 오답 이유)
 
-## 문서
-- [`docs/PROMPT.md`](docs/PROMPT.md) — 코딩 AI(Claude Code, Cursor, antigravity 등)에 붙여 넣을 구현 프롬프트
-- [`docs/DESIGN_NOTES.md`](docs/DESIGN_NOTES.md) — 프롬프트 설계 과정 (Sam·Jenny·Will 검토 내용)
+학생용(정답 제외)과 교사용(전체)으로 A4 인쇄하거나 PDF로 저장할 수 있습니다.
 
-## 사용법
-`docs/PROMPT.md`의 프롬프트 본문을 코딩 AI에 그대로 붙여 넣고, "구현 순서" 1단계부터 하나씩 진행하세요.
+## 실행 방법
+
+필요한 것: Node.js 20 이상, pnpm, Anthropic API 키
+
+```bash
+pnpm install
+cp .env.example .env.local   # ANTHROPIC_API_KEY 값을 채워 넣으세요
+pnpm dev                     # http://localhost:3000
+```
+
+```bash
+pnpm test        # 단위 테스트 (LLM 호출 없음)
+pnpm typecheck   # 타입 검사
+```
+
+## 동작 방식
+
+```
+지문 입력 → 문장 분리(코드, s1·s2…) ─┬─ 단어목록   ┐
+                                    ├─ 해석       │  섹션·문제 유형마다 API를 따로 호출
+                                    ├─ 문법·구문  │  (동시 4개), 끝난 섹션부터 화면에 표시
+                                    ├─ 문장구조   │
+                                    └─ 문제 × 유형 ┘
+                                         ↓
+              LLM(JSON) → Zod 형태 검사 → 지문 대조 검증 → 코드가 문제 조립
+                    ↑______ 규칙 위반 시 오류 내용을 알려주고 최대 2회 재시도
+```
+
+품질을 위해 지킨 원칙:
+
+- **오프셋은 코드가 계산합니다.** LLM에는 원문 구절을 그대로 받고, 위치는 `lib/align.ts`가 찾습니다. LLM은 글자 수를 정확히 세지 못하기 때문입니다.
+- **지문 변형은 코드가 합니다.** 순서배열·문장삽입·무관한 문장·빈칸·어법·어휘 문제는 LLM이 정한 문장 ID와 구절을 바탕으로 `lib/assemble.ts`가 시험지를 조립합니다.
+- **정답 번호가 한쪽으로 쏠리지 않게 합니다.** 선택지는 서버에서 섞습니다. 위치가 의미 있는 유형(어법·어휘·내용일치)은 코드가 정답 위치를 무작위로 정해 LLM에 지시합니다. 순서배열은 (A)(B)(C) 라벨을 코드가 무작위로 붙입니다.
+- **문제와 정답은 한 번에 생성합니다.** 그래서 문제와 정답지가 어긋나지 않습니다.
+- **한 섹션이 실패해도 나머지는 표시됩니다.** 실패한 섹션은 "다시 생성"으로 그것만 다시 만듭니다.
+
+## 폴더 구조
+
+```
+app/
+  page.tsx                    입력 화면 + 최근 기록
+  result/page.tsx             결과 화면 (6개 탭)
+  api/analyze/[section]/      vocabulary | translation | grammar | structure | question
+components/
+  ResultView.tsx              생성 진행·탭·인쇄
+  sections/*.tsx              섹션별 화면
+lib/
+  split-sentences.ts          문장 분리 (약어·소수점·따옴표·말줄임표 처리)
+  align.ts                    구절 → 오프셋
+  validators.ts               섹션별 지문 대조 검증
+  assemble.ts                 유형별 문제 조립
+  shuffle.ts                  선택지 섞기
+  schema.ts                   Zod 스키마 (LLM 응답, API 요청)
+  llm.ts                      LLM 호출 + JSON 추출 + 재시도
+  pipeline.ts                 섹션/유형별 실행
+  prompts/                    LLM 프롬프트
+  history.ts                  브라우저 기록 (최근 10건)
+tests/                        Vitest 단위 테스트
+docs/
+  PROMPT.md                   이 앱을 만들 때 쓴 원본 요구사항 프롬프트
+  DESIGN_NOTES.md             설계 검토 노트
+```
+
+## 설정 (`.env.local`)
+
+| 변수 | 설명 | 기본값 |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | Anthropic API 키 (필수) | — |
+| `ANTHROPIC_MODEL` | 사용할 모델 | `claude-sonnet-5-5` |
+| `RATE_LIMIT_PER_MINUTE` | IP당 분당 요청 수 | `40` |
+
+## 원래 요구사항(docs/PROMPT.md)과 달라진 점
+
+- 진행 상태는 SSE 대신 **섹션별 API 개별 호출**로 보여줍니다. 구현이 단순하고 재생성도 쉽습니다.
+- 지문 1건에 요청이 `4 + 문제 유형 수`만큼 나가서, rate limit을 분당 5회에서 **분당 40회**로 올렸습니다.
+- 메모리 기반 rate limit은 서버 인스턴스가 하나일 때만 정확합니다. 여러 인스턴스로 배포하면 Redis 등으로 바꾸세요.
+- 문장삽입은 6문장 이상, 무관한 문장은 5문장 이상, 순서배열은 4문장 이상인 지문에서만 만들어집니다. 짧은 지문이면 해당 유형에 안내 메시지가 나옵니다.

@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+:root {
+  --ink: #1f2328;
+  --muted: #59636e;
+  --line: #d8dee4;
+  --accent: #1f4e8c;
+}
+
+body {
+  color: var(--ink);
+  background: #f6f7f9;
+  font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+}
+
+/* 영어 지문은 세리프로 시험지 느낌 */
+.passage {
+  font-family: "Times New Roman", "Noto Serif", Georgia, serif;
+  font-size: 1.05rem;
+  line-height: 1.9;
+}
+
+/* 문제 지문의 빈칸 */
+.blank {
+  display: inline-block;
+  min-width: 7em;
+  border-bottom: 1.5px solid currentColor;
+  margin: 0 0.2em;
+}
+
+/* 문장 성분: 인쇄(흑백)에서도 구분되도록 색 + 밑줄 모양을 함께 쓴다 */
+.role { text-underline-offset: 4px; text-decoration-thickness: 2px; text-decoration-line: underline; }
+.role-S { color: #1d4ed8; text-decoration-style: solid; }
+.role-V { color: #b91c1c; text-decoration-style: double; font-weight: 700; }
+.role-O, .role-IO, .role-DO { color: #047857; text-decoration-style: dashed; }
+.role-C, .role-OC { color: #7c3aed; text-decoration-style: dotted; }
+.role-M { color: #6b7280; text-decoration-style: wavy; text-decoration-thickness: 1px; }
+.role-CONJ { color: #b45309; text-decoration-line: none; font-style: italic; }
+
+.role-tag {
+  font-family: system-ui, sans-serif;
+  font-size: 0.65rem;
+  font-weight: 700;
+  vertical-align: super;
+  margin-left: 1px;
+}
+
+@media print {
+  @page { size: A4; margin: 15mm; }
+  body { background: white; }
+  .no-print { display: none !important; }
+  .print-panel { display: block !important; }
+  .print-panel + .print-panel { break-before: page; }
+  body[data-print="student"] .answer-panel { display: none !important; }
+  .avoid-break { break-inside: avoid; }
+  .role, .role-tag { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

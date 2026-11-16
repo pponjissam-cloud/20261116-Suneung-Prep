@@ -45,13 +45,28 @@ body {
   margin-left: 1px;
 }
 
+/* ───── 인쇄 / PDF ───── */
+@page {
+  size: A4;
+  margin: 15mm 15mm 18mm;
+  /* 쪽 번호 (Chrome·Edge 131 이상) */
+  @bottom-center {
+    content: counter(page) " / " counter(pages);
+    font-size: 9pt;
+    color: #59636e;
+  }
+}
+
 @media print {
-  @page { size: A4; margin: 15mm; }
-  body { background: white; }
+  html, body { background: white; font-size: 10.5pt; }
   .no-print { display: none !important; }
+  /* 화면에서 숨긴 탭도 인쇄에는 모두 나온다 */
   .print-panel { display: block !important; }
-  .print-panel + .print-panel { break-before: page; }
-  body[data-print="student"] .answer-panel { display: none !important; }
+  /* 인쇄 창에서 빼기로 고른 섹션 */
+  .print-panel.print-exclude { display: none !important; }
+  /* 섹션마다 새 페이지에서 시작 */
+  .page-start { break-before: page; }
   .avoid-break { break-inside: avoid; }
-  .role, .role-tag { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  h2, h3 { break-after: avoid; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }

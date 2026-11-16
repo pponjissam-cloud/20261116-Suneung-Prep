@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import PassageUpload from "@/components/PassageUpload";
 import { deleteHistory, listHistory, saveJob, type HistoryEntry } from "@/lib/history";
 import { MAX_WORDS, MIN_WORDS, NON_ENGLISH_WARN_RATIO } from "@/lib/limits";
 import { QUESTION_TYPE_INFO } from "@/lib/question-types";
@@ -16,6 +17,7 @@ export default function HomePage() {
   const [types, setTypes] = useState<QuestionType[]>([...QUESTION_TYPES]);
   const [difficulty, setDifficulty] = useState<Difficulty>("basic");
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [upload, setUpload] = useState<{ text: string; prev: string; warnings: string[]; source: "photo" | "file" } | null>(null);
 
   useEffect(() => setHistory(listHistory()), []);
 
@@ -26,6 +28,12 @@ export default function HomePage() {
 
   const toggle = (t: QuestionType) =>
     setTypes((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : QUESTION_TYPES.filter((x) => prev.includes(x) || x === t)));
+
+  // 추출한 지문으로 바꾸되, 이전 내용은 되돌리기·이어 붙이기용으로 보관
+  const onUploaded = (text: string, warnings: string[], source: "photo" | "file") => {
+    setUpload({ text, prev: passage, warnings, source });
+    setPassage(text);
+  };
 
   const submit = () => {
     if (!canSubmit) return;
@@ -50,6 +58,48 @@ export default function HomePage() {
             예시 지문 넣기
           </button>
         </div>
+        <PassageUpload onText={onUploaded} />
+        {upload && (
+          <div className="mt-2 rounded-lg bg-amber-50 px-4 py-3 text-sm">
+            <p className="font-semibold">
+              {upload.source === "photo" ? "사진" : "파일"}에서 지문을 가져왔습니다. 잘못 읽은 글자가 없는지 꼭 확인하고 고쳐 주세요.
+            </p>
+            {upload.warnings.length > 0 && (
+              <ul className="mt-1 list-disc pl-5 text-amber-800">
+                {upload.warnings.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            )}
+            <div className="mt-2 flex flex-wrap gap-3">
+              {upload.prev.trim() && (
+                <button
+                  type="button"
+                  className="underline"
+                  onClick={() => {
+                    setPassage(`${upload.prev.trim()} ${upload.text}`);
+                    setUpload(null);
+                  }}
+                >
+                  기존 내용 뒤에 이어 붙이기 (지문이 여러 쪽일 때)
+                </button>
+              )}
+              <button
+                type="button"
+                className="underline"
+                onClick={() => {
+                  setPassage(upload.prev);
+                  setUpload(null);
+                }}
+              >
+                되돌리기
+              </button>
+              <button type="button" className="text-[var(--muted)] underline" onClick={() => setUpload(null)}>
+                닫기
+              </button>
+            </div>
+          </div>
+        )}
         <textarea
           id="passage"
           value={passage}

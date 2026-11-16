@@ -28,7 +28,8 @@ export function extractJson(text: string): unknown {
 
 type GenerateOptions<Raw, Out> = {
   system: string;
-  user: string;
+  /** 문자열 또는 이미지·PDF를 포함한 content 블록 */
+  user: string | Anthropic.ContentBlockParam[];
   schema: ZodType<Raw, ZodTypeDef, unknown>;
   /** 지문과 대조 검증 + 변환. OutputRuleError 를 던지면 그 메시지로 재시도한다 */
   convert: (raw: Raw, isLastAttempt: boolean) => Out;

@@ -11,6 +11,16 @@
 
 학생용(정답 제외)과 교사용(전체)으로 A4 인쇄하거나 PDF로 저장할 수 있습니다.
 
+### 지문 입력 방법
+- **직접 붙여 넣기**
+- **📷 사진 찍기**: 휴대폰에서는 바로 카메라가 열립니다. 지문이 두 쪽에 걸치면 한 장씩 찍고 "기존 내용 뒤에 이어 붙이기"를 누르세요.
+- **📁 파일 올리기 / 끌어다 놓기**: 사진(JPG·PNG·WEBP, 최대 4장), PDF(1개), TXT
+  - 사진과 PDF는 Claude가 글자를 읽어 영어 지문 본문만 뽑습니다 (문항 번호, 한국어 발문, 선택지, 각주는 제외).
+  - 사진은 업로드 전에 브라우저에서 긴 변 2000px JPEG로 줄입니다. 요청 1건은 최대 4MB입니다.
+  - 흐려서 추정한 단어나 빈칸(____)이 있으면 경고를 보여줍니다. 뽑힌 글은 생성 전에 꼭 확인·수정하세요.
+  - TXT는 서버를 거치지 않고 브라우저에서 바로 읽습니다.
+  - Word(.docx)와 HEIC는 지원하지 않습니다. HEIC는 Safari에서는 자동 변환되고, 다른 브라우저에서는 JPG로 바꿔 올려야 합니다.
+
 ## 실행 방법
 
 필요한 것: Node.js 20 이상, pnpm, Anthropic API 키
@@ -54,7 +64,9 @@ app/
   page.tsx                    입력 화면 + 최근 기록
   result/page.tsx             결과 화면 (6개 탭)
   api/analyze/[section]/      vocabulary | translation | grammar | structure | question
+  api/extract/                사진·PDF → 지문 텍스트
 components/
+  PassageUpload.tsx           사진 찍기·파일 올리기·끌어다 놓기
   ResultView.tsx              생성 진행·탭·인쇄
   sections/*.tsx              섹션별 화면
 lib/
@@ -68,6 +80,8 @@ lib/
   pipeline.ts                 섹션/유형별 실행
   prompts/                    LLM 프롬프트
   history.ts                  브라우저 기록 (최근 10건)
+  upload.ts / image.ts        파일 판별·추출 텍스트 정리 / 사진 축소
+  extract.ts                  사진·PDF 글자 추출 (Claude 비전)
 tests/                        Vitest 단위 테스트
 docs/
   PROMPT.md                   이 앱을 만들 때 쓴 원본 요구사항 프롬프트

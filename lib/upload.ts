@@ -2,12 +2,12 @@
 
 export type UploadKind = "text" | "image" | "pdf";
 
-/** 한 번에 올릴 수 있는 이미지 수 (지문이 두 쪽에 걸친 경우 대비) */
-export const MAX_IMAGES = 4;
+/** 한 번에 올릴 수 있는 사진 수 (시험지 여러 쪽) */
+export const MAX_IMAGES = 8;
 /** 요청 1건 최대 크기. Vercel 등 서버리스 요청 본문 한도(약 4.5MB)보다 작게 잡는다 */
 export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 /** 업로드 전 이미지 축소 기준 (긴 변 픽셀) */
-export const IMAGE_MAX_SIDE = 2000;
+export const IMAGE_MAX_SIDE = 1800;
 
 export const SERVER_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"] as const;
 export type ServerImageType = (typeof SERVER_IMAGE_TYPES)[number];

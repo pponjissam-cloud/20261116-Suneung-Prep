@@ -5,6 +5,8 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { callAnalyze, runPool } from "@/lib/client-api";
 import { getHistory, loadJob, saveHistory, type JobRequest } from "@/lib/history";
+import type { PassageInput } from "@/lib/passages";
+import { orderedPrintItems, type ExportOptions } from "@/lib/print-sections";
 import { splitSentences } from "@/lib/split-sentences";
 import type { AnalysisResult, Question, QuestionType, SectionKey } from "@/lib/types";
 import PrintDialog, { PRINT_SECTIONS, type PrintKey } from "./PrintDialog";
@@ -18,17 +20,10 @@ import VocabSection from "./sections/VocabSection";
 import SectionShell, { type TaskStatus } from "./SectionShell";
 
 type TaskKey = SectionKey | `q:${QuestionType}`;
-type TabKey = SectionKey | "questions" | "answers";
+type TabKey = Exclude<PrintKey, "cover">;
 
 const SECTION_KEYS: SectionKey[] = ["vocabulary", "translation", "grammar", "structure"];
-const TABS: { key: TabKey; label: string }[] = [
-  { key: "vocabulary", label: "① 단어목록" },
-  { key: "translation", label: "② 문장별 해석" },
-  { key: "grammar", label: "③ 중요 문법·구문" },
-  { key: "structure", label: "④ 문장구조분석" },
-  { key: "questions", label: "⑤ 유형별 문제" },
-  { key: "answers", label: "⑥ 정답지" },
-];
+const TABS = PRINT_SECTIONS.filter((p): p is { key: TabKey; label: string } => p.key !== "cover");
 
 const RESULT_FIELD = {
   vocabulary: "vocabulary",
@@ -37,42 +32,48 @@ const RESULT_FIELD = {
   structure: "structures",
 } as const satisfies Record<SectionKey, keyof AnalysisResult>;
 
+/** 상태 맵 키: 지문 ID + 작업 */
+const sk = (pid: string, key: TaskKey) => `${pid}::${key}`;
+
 export default function ResultView() {
   const id = useSearchParams().get("id") ?? "";
   const [request, setRequest] = useState<JobRequest | null>(null);
-  const [result, setResult] = useState<AnalysisResult | null>(null);
-  const [statuses, setStatuses] = useState<Partial<Record<TaskKey, TaskStatus>>>({});
+  const [results, setResults] = useState<Record<string, AnalysisResult>>({});
+  const [statuses, setStatuses] = useState<Record<string, TaskStatus>>({});
+  const [active, setActive] = useState<string>("");
   const [tab, setTab] = useState<TabKey>("vocabulary");
   const [notFound, setNotFound] = useState(false);
   const [printOpen, setPrintOpen] = useState(false);
-  const [printKeys, setPrintKeys] = useState<PrintKey[]>(PRINT_SECTIONS.map((p) => p.key));
+  const [exportOpts, setExportOpts] = useState<ExportOptions>({
+    keys: PRINT_SECTIONS.map((p) => p.key),
+    passageIds: [],
+    answersAtEnd: false,
+  });
   const started = useRef(false);
   const createdAt = useRef<string | undefined>(undefined);
 
-  const setStatus = (key: TaskKey, s: TaskStatus) => setStatuses((prev) => ({ ...prev, [key]: s }));
+  const setStatus = (pid: string, key: TaskKey, s: TaskStatus) => setStatuses((prev) => ({ ...prev, [sk(pid, key)]: s }));
 
-  const runTask = useCallback(async (req: JobRequest, key: TaskKey) => {
-    setStatus(key, { state: "loading" });
-    const body = { passage: req.passage, difficulty: req.difficulty };
+  const runTask = useCallback(async (req: JobRequest, passage: PassageInput, key: TaskKey) => {
+    const pid = passage.id;
+    setStatus(pid, key, { state: "loading" });
+    const body = { passage: passage.text, difficulty: req.difficulty };
+    const patch = (fn: (r: AnalysisResult) => AnalysisResult) => setResults((prev) => (prev[pid] ? { ...prev, [pid]: fn(prev[pid]) } : prev));
 
     if (key.startsWith("q:")) {
       const type = key.slice(2) as QuestionType;
       const res = await callAnalyze<Omit<Question, "id">>("question", { ...body, questionType: type });
-      if (!res.ok) return setStatus(key, { state: "error", error: res.error, retryable: res.retryable });
-      const q: Question = { ...res.data, id: `q-${type}` };
-      setResult((prev) => {
-        if (!prev) return prev;
-        const others = prev.questions.filter((x) => x.type !== type);
-        const order = (t: QuestionType) => req.questionTypes.indexOf(t);
-        return { ...prev, questions: [...others, q].sort((a, b) => order(a.type) - order(b.type)) };
-      });
+      if (!res.ok) return setStatus(pid, key, { state: "error", error: res.error, retryable: res.retryable });
+      const q: Question = { ...res.data, id: `${pid}-q-${type}` };
+      const order = (t: QuestionType) => req.questionTypes.indexOf(t);
+      patch((r) => ({ ...r, questions: [...r.questions.filter((x) => x.type !== type), q].sort((a, b) => order(a.type) - order(b.type)) }));
     } else {
       const section = key as SectionKey;
       const res = await callAnalyze<unknown>(section, body);
-      if (!res.ok) return setStatus(key, { state: "error", error: res.error, retryable: res.retryable });
-      setResult((prev) => (prev ? { ...prev, [RESULT_FIELD[section]]: res.data } : prev));
+      if (!res.ok) return setStatus(pid, key, { state: "error", error: res.error, retryable: res.retryable });
+      patch((r) => ({ ...r, [RESULT_FIELD[section]]: res.data }));
     }
-    setStatus(key, { state: "success" });
+    setStatus(pid, key, { state: "success" });
   }, []);
 
   // 최초 진입: 기록이 있으면 불러오고, 없으면 생성 시작
@@ -84,37 +85,42 @@ export default function ResultView() {
     if (saved) {
       createdAt.current = saved.createdAt;
       setRequest(saved.request);
-      setResult(saved.result);
+      setResults(saved.results);
+      setActive(saved.request.passages[0]?.id ?? "");
       return;
     }
     const job = loadJob(id);
-    if (!job) {
+    if (!job || job.passages.length === 0) {
       setNotFound(true);
       return;
     }
     setRequest(job);
-    setResult({ sentences: splitSentences(job.passage), questions: [] });
+    setActive(job.passages[0].id);
+    setResults(Object.fromEntries(job.passages.map((p) => [p.id, { sentences: splitSentences(p.text), questions: [] }])));
+    // 지문 순서대로 실행 → 첫 지문 결과부터 볼 수 있다
     const keys: TaskKey[] = [...SECTION_KEYS, ...job.questionTypes.map((t) => `q:${t}` as const)];
-    void runPool(keys.map((k) => () => runTask(job, k)), 4);
+    const tasks = job.passages.flatMap((p) => keys.map((k) => () => runTask(job, p, k)));
+    void runPool(tasks, 4);
   }, [id, runTask]);
 
   // 진행 중인 작업이 없으면 기록에 저장
-  const busy = Object.values(statuses).some((s) => s?.state === "loading");
+  const busy = Object.values(statuses).some((s) => s.state === "loading");
   const anyRan = Object.keys(statuses).length > 0;
   useEffect(() => {
-    if (!busy && anyRan && request && result) saveHistory({ id, request, result, createdAt: createdAt.current });
-  }, [busy, anyRan, id, request, result]);
+    if (!busy && anyRan && request) saveHistory({ id, request, results, createdAt: createdAt.current });
+  }, [busy, anyRan, id, request, results]);
 
   const dateText = new Date(createdAt.current ?? Date.now()).toLocaleDateString("ko-KR");
+  const ymd = new Date(createdAt.current ?? Date.now()).toLocaleDateString("sv-SE");
+  const fileBase = (label: string) => `수능지문분석_${ymd}_${label.replace(/[^0-9A-Za-z가-힣+]+/g, "")}`;
 
-  /** 고른 섹션만 남기고 인쇄 창을 연다. 파일 이름이 되는 문서 제목도 잠시 바꾼다 */
-  const doPrint = (keys: PrintKey[], label: string) => {
-    setPrintKeys(keys);
+  /** 고른 지문·섹션만 남기고 인쇄 창을 연다. 파일 이름이 되는 문서 제목도 잠시 바꾼다 */
+  const doPrint = (opts: ExportOptions, label: string) => {
+    setExportOpts(opts);
     setPrintOpen(false);
     window.setTimeout(() => {
       const prevTitle = document.title;
-      const ymd = new Date(createdAt.current ?? Date.now()).toLocaleDateString("sv-SE");
-      document.title = `수능지문분석_${ymd}_${label.replace(/[^0-9A-Za-z가-힣+]+/g, "")}`;
+      document.title = fileBase(label);
       const reset = () => {
         document.title = prevTitle;
         window.removeEventListener("afterprint", reset);
@@ -124,16 +130,18 @@ export default function ResultView() {
     }, 100);
   };
 
-  /** 고른 섹션을 Word 파일로 내려받는다. docx 라이브러리는 이때만 불러온다 */
-  const doWord = async (keys: PrintKey[], label: string) => {
-    if (!request || !result) return;
+  /** 고른 지문·섹션을 Word 파일로 내려받는다. docx 라이브러리는 이때만 불러온다 */
+  const doWord = async (opts: ExportOptions, label: string) => {
+    if (!request) return;
     const [{ Packer }, { buildDocx }] = await Promise.all([import("docx"), import("@/lib/docx-export")]);
-    const doc = buildDocx({ result, questionTypes: request.questionTypes, dateText, keys });
+    const passages = request.passages
+      .filter((p) => opts.passageIds.includes(p.id) && results[p.id])
+      .map((p) => ({ id: p.id, label: p.label, result: results[p.id] }));
+    const doc = buildDocx({ passages, questionTypes: request.questionTypes, dateText, keys: opts.keys, answersAtEnd: opts.answersAtEnd });
     const blob = await Packer.toBlob(doc);
-    const ymd = new Date(createdAt.current ?? Date.now()).toLocaleDateString("sv-SE");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `수능지문분석_${ymd}_${label.replace(/[^0-9A-Za-z가-힣+]+/g, "")}.docx`;
+    a.download = `${fileBase(label)}.docx`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -149,35 +157,117 @@ export default function ResultView() {
         </Link>
       </main>
     );
-  if (!request || !result) return <p className="p-10 text-center">불러오는 중…</p>;
+  if (!request || !results[active]) return <p className="p-10 text-center">불러오는 중…</p>;
 
-  const s = result.sentences;
-  const retry = (key: TaskKey) => () => void runTask(request, key);
-  const total = SECTION_KEYS.length + request.questionTypes.length;
-  const done = Object.values(statuses).filter((x) => x && x.state !== "loading").length;
+  const passages = request.passages;
+  const multi = passages.length > 1;
+  const taskKeys: TaskKey[] = [...SECTION_KEYS, ...request.questionTypes.map((t) => `q:${t}` as const)];
+  const progressOf = (pid: string) => {
+    const st = taskKeys.map((k) => statuses[sk(pid, k)]).filter(Boolean);
+    return {
+      done: st.filter((s) => s.state !== "loading").length,
+      loading: st.some((s) => s.state === "loading"),
+      error: st.some((s) => s.state === "error"),
+      started: st.length > 0,
+    };
+  };
+  const total = passages.length * taskKeys.length;
+  const done = Object.values(statuses).filter((s) => s.state !== "loading").length;
 
-  const firstPrinted = PRINT_SECTIONS.find((p) => printKeys.includes(p.key))?.key;
-  const labelOf = (key: PrintKey) => PRINT_SECTIONS.find((p) => p.key === key)?.label ?? "";
+  // 인쇄 순서: 지문마다 고른 섹션을 차례로 (정답지 모으기면 정답지만 맨 뒤)
+  // (인쇄 창을 거치지 않고 Ctrl+P 로 인쇄하면 모든 지문·섹션)
+  const effective = exportOpts.passageIds.length ? exportOpts : { ...exportOpts, passageIds: passages.map((p) => p.id) };
+  const printItems = orderedPrintItems(
+    passages.map((p) => p.id),
+    effective,
+  );
+  const printIndex = new Map(printItems.map((it, i) => [`${it.passageId}::${it.key}`, i]));
 
-  /** 섹션 하나 = 인쇄 시 새 페이지 하나에서 시작 */
-  const panel = (key: PrintKey, children: React.ReactNode) => {
-    const included = printKeys.includes(key);
-    const onScreen = key !== "cover" && tab === key;
+  const renderSection = (p: PassageInput, key: PrintKey) => {
+    const r = results[p.id];
+    const st = (k: TaskKey) => statuses[sk(p.id, k)];
+    const retry = (k: TaskKey) => () => void runTask(request, p, k);
+    switch (key) {
+      case "cover":
+        return (
+          <CoverSection
+            sentences={r.sentences}
+            questionTypes={request.questionTypes}
+            dateText={dateText}
+            passageLabel={multi ? p.label : undefined}
+            contents={PRINT_SECTIONS.filter((s) => s.key !== "cover" && exportOpts.keys.includes(s.key)).map((s) => s.label)}
+          />
+        );
+      case "vocabulary":
+        return (
+          <SectionShell title="단어목록" status={st("vocabulary")} onRetry={retry("vocabulary")}>
+            {r.vocabulary && <VocabSection items={r.vocabulary} sentences={r.sentences} />}
+          </SectionShell>
+        );
+      case "translation":
+        return (
+          <SectionShell title="문장별 해석" status={st("translation")} onRetry={retry("translation")}>
+            {r.translations && <TranslationSection sentences={r.sentences} translations={r.translations} />}
+          </SectionShell>
+        );
+      case "grammar":
+        return (
+          <SectionShell title="중요 문법·구문" status={st("grammar")} onRetry={retry("grammar")}>
+            {r.grammar && <GrammarSection sentences={r.sentences} points={r.grammar} />}
+          </SectionShell>
+        );
+      case "structure":
+        return (
+          <SectionShell title="문장구조분석" status={st("structure")} onRetry={retry("structure")}>
+            {r.structures && <StructureSection sentences={r.sentences} structures={r.structures} />}
+          </SectionShell>
+        );
+      case "questions":
+        return (
+          <QuestionsSection
+            types={request.questionTypes}
+            questions={r.questions}
+            statusOf={(t) => st(`q:${t}`)}
+            onRetry={(t) => retry(`q:${t}`)()}
+          />
+        );
+      case "answers":
+        return <AnswerSection types={request.questionTypes} questions={r.questions} title={multi ? `${p.label} 정답 및 해설` : undefined} />;
+    }
+  };
+
+  /** 지문 하나의 섹션 하나 = 인쇄 시 새 페이지 하나에서 시작 */
+  const panel = (p: PassageInput, key: PrintKey) => {
+    const idx = printIndex.get(`${p.id}::${key}`);
+    const included = idx !== undefined;
+    const onScreen = key !== "cover" && tab === key && active === p.id;
     return (
       <div
-        className={["print-panel", onScreen ? "" : "hidden", included ? "" : "print-exclude", included && key !== firstPrinted ? "page-start" : ""].join(" ")}
+        key={`${p.id}::${key}`}
+        className={["print-panel", onScreen ? "" : "hidden", included ? "" : "print-exclude", included && idx > 0 ? "page-start" : ""].join(" ")}
       >
         {key !== "cover" && (
           <div className="mb-3 hidden justify-between border-b border-[var(--line)] pb-1 text-[0.7rem] text-[var(--muted)] print:flex">
-            <span>수능 영어 지문 분석 · {labelOf(key)}</span>
+            <span>
+              수능 영어 지문 분석 · {multi ? `${p.label} · ` : ""}
+              {PRINT_SECTIONS.find((s) => s.key === key)?.label}
+            </span>
             <span>{dateText}</span>
           </div>
         )}
-        {children}
+        {renderSection(p, key)}
       </div>
     );
   };
 
+  // DOM 순서 = 인쇄 순서 (인쇄에 포함된 것 먼저, 나머지는 화면용)
+  const byId = new Map(passages.map((p) => [p.id, p]));
+  const renderOrder = [
+    ...printItems.map((it) => ({ p: byId.get(it.passageId)!, key: it.key })),
+    ...passages.flatMap((p) => PRINT_SECTIONS.map((s) => ({ p, key: s.key }))).filter((x) => !printIndex.has(`${x.p.id}::${x.key}`)),
+  ];
+
+  const activePassage = passages.find((p) => p.id === active) ?? passages[0];
   const currentTabLabel = TABS.find((t) => t.key === tab)?.label ?? "";
 
   return (
@@ -189,7 +279,7 @@ export default function ResultView() {
         <div className="flex gap-2 text-sm">
           <button
             type="button"
-            onClick={() => doPrint([tab], currentTabLabel)}
+            onClick={() => doPrint({ keys: [tab], passageIds: [activePassage.id], answersAtEnd: false }, `${multi ? activePassage.label : ""}${currentTabLabel}`)}
             className="rounded-lg border border-[var(--line)] bg-white px-3 py-1.5"
           >
             이 탭만 인쇄
@@ -200,12 +290,42 @@ export default function ResultView() {
         </div>
       </header>
 
-      <PrintDialog open={printOpen} onClose={() => setPrintOpen(false)} onPrint={doPrint} onWord={doWord} />
+      <PrintDialog
+        open={printOpen}
+        onClose={() => setPrintOpen(false)}
+        passages={passages}
+        currentPassageId={activePassage.id}
+        onPrint={doPrint}
+        onWord={doWord}
+      />
 
       {busy && (
         <div className="no-print mt-4 rounded-lg bg-blue-50 px-4 py-2 text-sm">
-          생성 중… {done}/{total} 완료. 완료된 섹션부터 볼 수 있습니다. 인쇄는 생성이 끝난 뒤에 하세요.
+          생성 중… {done}/{total} 완료. 완료된 섹션부터 볼 수 있습니다. 인쇄·저장은 생성이 끝난 뒤에 하세요.
         </div>
+      )}
+
+      {multi && (
+        <nav className="no-print mt-4 flex flex-wrap gap-2" aria-label="지문 선택">
+          {passages.map((p, i) => {
+            const pr = progressOf(p.id);
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => setActive(p.id)}
+                className={`rounded-full border px-3 py-1 text-sm ${
+                  active === p.id ? "border-[var(--accent)] bg-[var(--accent)] text-white" : "border-[var(--line)] bg-white"
+                }`}
+              >
+                {i + 1}. {p.label}
+                <span className="ml-1.5 text-xs opacity-80">
+                  {pr.loading ? `${pr.done}/${taskKeys.length}` : pr.error ? "⚠" : pr.started ? "✓" : ""}
+                </span>
+              </button>
+            );
+          })}
+        </nav>
       )}
 
       <nav className="no-print mt-4 flex flex-wrap gap-1 border-b border-[var(--line)]">
@@ -224,49 +344,8 @@ export default function ResultView() {
       </nav>
 
       <div className="rounded-b-xl border border-t-0 border-[var(--line)] bg-white p-5 print:rounded-none print:border-0 print:p-0">
-        {panel(
-          "cover",
-          <CoverSection
-            sentences={s}
-            questionTypes={request.questionTypes}
-            dateText={dateText}
-            contents={PRINT_SECTIONS.filter((p) => p.key !== "cover" && printKeys.includes(p.key)).map((p) => p.label)}
-          />,
-        )}
-        {panel(
-          "vocabulary",
-          <SectionShell title="단어목록" status={statuses.vocabulary} onRetry={retry("vocabulary")}>
-            {result.vocabulary && <VocabSection items={result.vocabulary} sentences={s} />}
-          </SectionShell>,
-        )}
-        {panel(
-          "translation",
-          <SectionShell title="문장별 해석" status={statuses.translation} onRetry={retry("translation")}>
-            {result.translations && <TranslationSection sentences={s} translations={result.translations} />}
-          </SectionShell>,
-        )}
-        {panel(
-          "grammar",
-          <SectionShell title="중요 문법·구문" status={statuses.grammar} onRetry={retry("grammar")}>
-            {result.grammar && <GrammarSection sentences={s} points={result.grammar} />}
-          </SectionShell>,
-        )}
-        {panel(
-          "structure",
-          <SectionShell title="문장구조분석" status={statuses.structure} onRetry={retry("structure")}>
-            {result.structures && <StructureSection sentences={s} structures={result.structures} />}
-          </SectionShell>,
-        )}
-        {panel(
-          "questions",
-          <QuestionsSection
-            types={request.questionTypes}
-            questions={result.questions}
-            statusOf={(t) => statuses[`q:${t}`]}
-            onRetry={(t) => retry(`q:${t}`)()}
-          />,
-        )}
-        {panel("answers", <AnswerSection types={request.questionTypes} questions={result.questions} />)}
+        {multi && <h2 className="no-print mb-3 text-sm font-semibold text-[var(--accent)]">{activePassage.label}</h2>}
+        {renderOrder.map(({ p, key }) => panel(p, key))}
       </div>
     </main>
   );

@@ -24,7 +24,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ sec
 
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
   const rl = checkRateLimit(ip);
-  if (!rl.ok) return fail(429, `요청이 너무 많습니다. ${rl.retryAfterSec}초 후 다시 시도하세요.`, true);
+  if (!rl.ok)
+    return NextResponse.json(
+      { ok: false, error: `요청이 너무 많습니다. ${rl.retryAfterSec}초 후 다시 시도하세요.`, retryable: true, retryAfterSec: rl.retryAfterSec },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
+    );
 
   const body = analyzeRequestSchema.safeParse(await req.json().catch(() => null));
   if (!body.success) return fail(400, "요청 형식이 올바르지 않습니다.", false);

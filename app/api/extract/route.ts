@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { OutputRuleError, PassageUnsuitableError } from "@/lib/errors";
-import { extractPassage, type ExtractInput } from "@/lib/extract";
+import { extractPassages, type ExtractInput } from "@/lib/extract";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { MAX_IMAGES, MAX_UPLOAD_BYTES, SERVER_IMAGE_TYPES, classifyFile, type ServerImageType } from "@/lib/upload";
 
@@ -11,14 +11,32 @@ function fail(status: number, error: string, retryable = false) {
   return NextResponse.json({ ok: false, error, retryable }, { status });
 }
 
-/** POST /api/extract  (multipart/form-data, 필드명 "files": 이미지 최대 4장 또는 PDF 1개) */
+/** 붙여 넣은 텍스트 나누기 요청의 최대 길이 */
+const MAX_TEXT_CHARS = 40_000;
+
+/**
+ * POST /api/extract  (multipart/form-data)
+ * - "files": 사진 최대 MAX_IMAGES장 또는 PDF 1개
+ * - "text": 여러 지문이 섞인 긴 텍스트 (지문별로 나눔)
+ * 결과: { passages: [{label, text, warnings}], warnings }
+ */
 export async function POST(req: NextRequest) {
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
   const rl = checkRateLimit(ip);
-  if (!rl.ok) return fail(429, `요청이 너무 많습니다. ${rl.retryAfterSec}초 후 다시 시도하세요.`, true);
+  if (!rl.ok)
+    return NextResponse.json(
+      { ok: false, error: `요청이 너무 많습니다. ${rl.retryAfterSec}초 후 다시 시도하세요.`, retryable: true, retryAfterSec: rl.retryAfterSec },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
+    );
 
   const form = await req.formData().catch(() => null);
   const files = (form?.getAll("files") ?? []).filter((f): f is File => f instanceof File);
+  const text = form?.get("text");
+
+  if (typeof text === "string" && text.trim()) {
+    if (text.length > MAX_TEXT_CHARS) return fail(413, `텍스트가 너무 깁니다 (최대 ${MAX_TEXT_CHARS.toLocaleString()}자).`);
+    return run([{ kind: "text", text }]);
+  }
   if (files.length === 0) return fail(400, "파일이 없습니다.");
 
   const total = files.reduce((n, f) => n + f.size, 0);
@@ -41,8 +59,12 @@ export async function POST(req: NextRequest) {
     inputs.push({ kind: "image", mediaType: f.type as ServerImageType, base64 });
   }
 
+  return run(inputs);
+}
+
+async function run(inputs: ExtractInput[]) {
   try {
-    const data = await extractPassage(inputs);
+    const data = await extractPassages(inputs);
     return NextResponse.json({ ok: true, data });
   } catch (e) {
     if (e instanceof PassageUnsuitableError) return fail(422, e.message);

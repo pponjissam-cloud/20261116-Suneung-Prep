@@ -6,14 +6,18 @@ type Props = {
   questionTypes: QuestionType[];
   dateText: string;
   contents: string[];
+  /** 지문이 여러 개일 때 지문 이름 (예: "18번") */
+  passageLabel?: string;
 };
 
 /** 인쇄 표지: 제목, 날짜, 목차, 원문 지문(문장 번호 포함) */
-export default function CoverSection({ sentences, questionTypes, dateText, contents }: Props) {
+export default function CoverSection({ sentences, questionTypes, dateText, contents, passageLabel }: Props) {
   return (
     <section>
       <div className="border-b-2 border-[var(--ink)] pb-3">
-        <h1 className="text-2xl font-bold">수능 영어 지문 분석 자료</h1>
+        <h1 className="text-2xl font-bold">
+          수능 영어 지문 분석 자료{passageLabel && <span className="ml-2 text-[var(--accent)]">· {passageLabel}</span>}
+        </h1>
         <p className="mt-1 text-sm text-[var(--muted)]">
           {dateText} · {sentences.length}문장
         </p>

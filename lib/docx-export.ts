@@ -24,15 +24,29 @@ import {
   type ISectionOptions,
   type ParagraphChild,
 } from "docx";
-import { PRINT_SECTIONS, type PrintKey } from "./print-sections";
+import { PRINT_SECTIONS, orderedPrintItems, type PrintKey } from "./print-sections";
 import { CIRCLED, QUESTION_TYPE_INFO } from "./question-types";
 import type { AnalysisResult, Block, QuestionType, Segment, Sentence, StructureRole } from "./types";
 
-export type DocxInput = {
+/** 지문 하나를 그릴 때 쓰는 정보 */
+type DocxInput = {
   result: AnalysisResult;
   questionTypes: QuestionType[];
   dateText: string;
   keys: PrintKey[];
+  /** 지문이 여러 개일 때만 (예: "18번") */
+  passageLabel?: string;
+};
+
+export type DocxPassage = { id: string; label: string; result: AnalysisResult };
+
+export type DocxExportInput = {
+  passages: DocxPassage[];
+  questionTypes: QuestionType[];
+  dateText: string;
+  keys: PrintKey[];
+  /** 정답지를 지문마다 넣지 않고 맨 뒤에 모은다 */
+  answersAtEnd?: boolean;
 };
 
 // ───────── 서식 상수 ─────────
@@ -106,7 +120,13 @@ function cover(input: DocxInput): Paragraph[] {
   const s = input.result.sentences;
   const contents = PRINT_SECTIONS.filter((x) => x.key !== "cover" && input.keys.includes(x.key)).map((x) => x.label);
   return [
-    new Paragraph({ spacing: { after: 80 }, children: [ko("수능 영어 지문 분석 자료", { bold: true, size: 40 })] }),
+    new Paragraph({
+      spacing: { after: 80 },
+      children: [
+        ko("수능 영어 지문 분석 자료", { bold: true, size: 40 }),
+        ...(input.passageLabel ? [ko(`  · ${input.passageLabel}`, { bold: true, size: 40, color: ACCENT })] : []),
+      ],
+    }),
     p([ko(`${input.dateText} · ${s.length}문장`, { color: MUTED })], {
       border: { bottom: { style: BorderStyle.SINGLE, size: 12, color: "1F2328", space: 4 } },
     }),
@@ -318,9 +338,18 @@ const TITLES: Record<Exclude<PrintKey, "cover">, string> = {
   answers: "정답 및 해설",
 };
 
-/** 고른 섹션으로 Word 문서를 만든다. 섹션마다 새 페이지(구역)에서 시작 */
-export function buildDocx(input: DocxInput): Document {
-  const keys = PRINT_SECTIONS.map((s) => s.key).filter((k) => input.keys.includes(k));
+/**
+ * Word 문서를 만든다.
+ * 지문1의 고른 섹션들 → 지문2의 고른 섹션들 → … 순서이고, 섹션마다 Word 구역(새 페이지)이 하나씩 생긴다.
+ * answersAtEnd 이면 정답지만 맨 뒤에 지문 순서대로 모은다.
+ */
+export function buildDocx(input: DocxExportInput): Document {
+  const multi = input.passages.length > 1;
+  const byId = new Map(input.passages.map((p) => [p.id, p]));
+  const items = orderedPrintItems(
+    input.passages.map((p) => p.id),
+    { keys: input.keys, passageIds: input.passages.map((p) => p.id), answersAtEnd: Boolean(input.answersAtEnd && multi) },
+  );
 
   const footer = new Footer({
     children: [
@@ -331,25 +360,36 @@ export function buildDocx(input: DocxInput): Document {
     ],
   });
 
-  const sections: ISectionOptions[] = keys.map((key) => {
-    const label = PRINT_SECTIONS.find((s) => s.key === key)!.label;
+  const sections: ISectionOptions[] = items.map(({ passageId, key }) => {
+    const passage = byId.get(passageId)!;
+    const ctx: DocxInput = {
+      result: passage.result,
+      questionTypes: input.questionTypes,
+      dateText: input.dateText,
+      keys: input.keys,
+      passageLabel: multi ? passage.label : undefined,
+    };
+    const sectionLabel = PRINT_SECTIONS.find((s) => s.key === key)!.label;
+    const headerText = `수능 영어 지문 분석 · ${multi ? `${passage.label} · ` : ""}${sectionLabel}`;
+    const title = multi && key !== "cover" ? `${passage.label} ${TITLES[key]}` : key === "cover" ? "" : TITLES[key];
     return {
       properties: { page: { size: A4, margin: { top: MARGIN, bottom: MARGIN, left: MARGIN, right: MARGIN } } },
+      // Word 는 머리글을 비워 두면 앞 구역 것을 물려받으므로 표지에는 빈 머리글을 명시한다
       headers:
         key === "cover"
-          ? undefined
+          ? { default: new Header({ children: [new Paragraph({ children: [] })] }) }
           : {
               default: new Header({
                 children: [
                   new Paragraph({
                     border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: "D8DEE4", space: 2 } },
-                    children: [ko(`수능 영어 지문 분석 · ${label}`, { size: 16, color: MUTED }), ko(`    ${input.dateText}`, { size: 16, color: MUTED })],
+                    children: [ko(headerText, { size: 16, color: MUTED }), ko(`    ${input.dateText}`, { size: 16, color: MUTED })],
                   }),
                 ],
               }),
             },
       footers: { default: footer },
-      children: key === "cover" ? BUILDERS.cover(input) : [heading(TITLES[key]), ...BUILDERS[key](input)],
+      children: key === "cover" ? BUILDERS.cover(ctx) : [heading(title), ...BUILDERS[key](ctx)],
     };
   });
 

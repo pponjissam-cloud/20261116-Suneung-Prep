@@ -37,7 +37,19 @@
   - TXT는 `===` 나 `---` 만 있는 줄로 지문을 나눕니다. 구분선 없이 길면 AI가 지문별로 나눕니다.
   - Word(.docx)와 HEIC는 지원하지 않습니다. HEIC는 Safari에서는 자동 변환되고, 다른 브라우저에서는 JPG로 바꿔 올려야 합니다.
 
-## 실행 방법
+## 가장 쉬운 실행: HTML 파일 하나 (설치 없음)
+
+[`dist/suneung-analyzer.html`](dist/suneung-analyzer.html) 파일을 내려받아 **더블클릭**하면 브라우저(Chrome·Edge 권장)에서 바로 실행됩니다.
+
+1. 처음 열면 맨 위에 **Anthropic API 키** 입력칸이 나옵니다. [Anthropic 콘솔](https://console.anthropic.com/settings/keys)에서 발급한 키(`sk-ant-…`)를 넣고 저장하세요.
+2. 키는 **그 브라우저에만** 저장되고 `api.anthropic.com` 으로만 보내집니다. 공용 컴퓨터에서는 다 쓴 뒤 '변경 → 키 지우기'를 누르세요.
+3. 나머지 기능(사진·파일 입력, 여러 지문, 인쇄·PDF·Word 저장, 기록)은 서버판과 같습니다.
+
+- 서버 없이 브라우저가 Claude API를 직접 부르므로 인터넷 연결이 필요하고, API 사용 요금은 키 주인에게 청구됩니다.
+- 생성 기록은 그 브라우저에 저장됩니다. 다른 컴퓨터·브라우저에서는 보이지 않습니다.
+- HTML 파일을 다시 만들려면: `pnpm install && pnpm build:html` → `dist/suneung-analyzer.html`
+
+## 서버로 실행 (Next.js)
 
 필요한 것: Node.js 20 이상, pnpm, Anthropic API 키
 
@@ -103,6 +115,8 @@ lib/
   print-sections.ts           내보내기 섹션 목록·출력 순서
   passages.ts                 여러 지문 나누기·정리
 tests/                        Vitest 단위 테스트
+standalone/                   HTML 단독 실행판 (브라우저에서 Claude 직접 호출, 해시 라우팅, 빌드 스크립트)
+dist/suneung-analyzer.html    HTML 단독 실행판 결과물
 docs/
   PROMPT.md                   이 앱을 만들 때 쓴 원본 요구사항 프롬프트
   DESIGN_NOTES.md             설계 검토 노트

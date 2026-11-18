@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { PROVIDERS, detectProvider, getApiKey, getModel, getProvider, isLegacyGeminiKey, onSettingsChange, setApiKey, setModel, type Provider } from "./settings";
 
+declare const __APP_VERSION__: string;
+const VERSION = typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "dev";
+
 const mask = (k: string) => (k.length > 12 ? `${k.slice(0, 6)}…${k.slice(-4)}` : "••••");
 
 /** 화면 맨 위: API 키(Claude 또는 Gemini)·모델 설정. 브라우저에만 저장 */
@@ -36,9 +39,10 @@ export default function ApiKeyBar() {
           <span>{mask(key)}</span>
           <span>모델: {getModel(provider)}</span>
           {isLegacyGeminiKey(key) && <span className="font-semibold text-amber-700">⚠ 예전 형식(AIza) 키라 거부될 수 있습니다. 새 키(AQ.…)로 바꾸세요.</span>}
+          <span className="ml-auto text-[0.65rem] opacity-70">버전 {VERSION}</span>
           <button
             type="button"
-            className="ml-auto underline"
+            className="underline"
             onClick={() => {
               setDraftKey("");
               setDraftModel(getModel(provider));
@@ -72,7 +76,9 @@ export default function ApiKeyBar() {
           if (newKey || key) setEditing(false);
         }}
       >
-        <p className="font-semibold">AI API 키를 입력하세요</p>
+        <p className="flex items-baseline justify-between gap-2 font-semibold">
+          AI API 키를 입력하세요 <span className="text-[0.65rem] font-normal text-[var(--muted)]">버전 {VERSION}</span>
+        </p>
         <p className="mt-1 text-xs leading-relaxed text-[var(--muted)]">
           이 파일은 서버 없이 브라우저에서 AI를 직접 부릅니다. 둘 중 하나의 키를 넣으세요:{" "}
           <a href={PROVIDERS.gemini.keyUrl} target="_blank" rel="noreferrer" className="underline">

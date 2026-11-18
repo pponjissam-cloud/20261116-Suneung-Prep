@@ -27,6 +27,9 @@ const esbuild = await load("esbuild");
 const tw = await load("tailwindcss");
 const compile = tw.compile ?? tw.default?.compile; // CJS·ESM 어느 쪽으로 불려도
 
+// 버전 = 빌드 시각 (한국 시간)
+const appVersion = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 16).replace("T", " ");
+
 // ───────── 1. JS 번들 ─────────
 const sub = (p) => path.join(here, p);
 const ALIASES = {
@@ -61,7 +64,8 @@ const result = await esbuild.build({
   jsx: "automatic",
   tsconfig: path.join(root, "tsconfig.json"),
   nodePaths: searchPaths.map((p) => (p === root ? path.join(root, "node_modules") : p)),
-  define: { "process.env.NODE_ENV": '"production"' },
+  // 화면에 보이는 버전 (어느 파일을 열었는지 헷갈리지 않게)
+  define: { "process.env.NODE_ENV": '"production"', __APP_VERSION__: JSON.stringify(appVersion) },
   plugins: [swapPlugin],
   logOverride: { "unsupported-directive": "silent" },
   logLevel: "warning",
@@ -96,7 +100,7 @@ const css = compiler.build([...candidates]);
 
 // ───────── 3. HTML 하나로 ─────────
 const pkg = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
-const built = new Date().toISOString().slice(0, 10);
+const built = appVersion;
 const html = `<!DOCTYPE html>
 <html lang="ko">
 <head>

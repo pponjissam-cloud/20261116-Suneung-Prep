@@ -41,11 +41,15 @@
 
 [`dist/suneung-analyzer.html`](dist/suneung-analyzer.html) 파일을 내려받아 **더블클릭**하면 브라우저(Chrome·Edge 권장)에서 바로 실행됩니다.
 
-1. 처음 열면 맨 위에 **Anthropic API 키** 입력칸이 나옵니다. [Anthropic 콘솔](https://console.anthropic.com/settings/keys)에서 발급한 키(`sk-ant-…`)를 넣고 저장하세요.
-2. 키는 **그 브라우저에만** 저장되고 `api.anthropic.com` 으로만 보내집니다. 공용 컴퓨터에서는 다 쓴 뒤 '변경 → 키 지우기'를 누르세요.
+1. 처음 열면 맨 위에 **API 키** 입력칸이 나옵니다. 아래 둘 중 하나의 키를 넣으세요. 키 모양으로 자동 인식합니다.
+   - **Google AI Studio (Gemini)**: [aistudio.google.com/apikey](https://aistudio.google.com/apikey)에서 발급, `AIza…`로 시작. 기본 모델 `gemini-3.8-flash`
+   - **Anthropic (Claude)**: [Anthropic 콘솔](https://console.anthropic.com/settings/keys)에서 발급, `sk-ant-…`로 시작. 기본 모델 `claude-sonnet-5-5`
+2. 키는 **그 브라우저에만** 저장되고 해당 회사 API로만 보내집니다. 공용 기기에서는 다 쓴 뒤 '변경 → 키 지우기'를 누르세요.
 3. 나머지 기능(사진·파일 입력, 여러 지문, 인쇄·PDF·Word 저장, 기록)은 서버판과 같습니다.
 
-- 서버 없이 브라우저가 Claude API를 직접 부르므로 인터넷 연결이 필요하고, API 사용 요금은 키 주인에게 청구됩니다.
+- 서버 없이 브라우저가 AI API를 직접 부르므로 인터넷 연결이 필요하고, API 사용 요금은 키 주인에게 청구됩니다.
+- Gemini 무료 등급은 분당·하루 요청 수가 적습니다. 지문 1개에 요청이 `4 + 문제 유형 수`만큼 나가므로, 한도에 걸리면 앱이 기다렸다 다시 보내지만 하루 한도를 넘으면 다음 날까지 실패합니다. 문제 유형을 줄이면 요청이 줄어듭니다.
+- 휴대폰에서는 파일을 **Chrome 등 브라우저로** 여세요. 메신저·앱의 미리보기 화면은 인터넷 요청을 막을 수 있습니다.
 - 생성 기록은 그 브라우저에 저장됩니다. 다른 컴퓨터·브라우저에서는 보이지 않습니다.
 - HTML 파일을 다시 만들려면: `pnpm install && pnpm build:html` → `dist/suneung-analyzer.html`
 

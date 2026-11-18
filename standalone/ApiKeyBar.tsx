@@ -1,38 +1,44 @@
 import { useEffect, useState } from "react";
-import { DEFAULT_MODEL, getApiKey, getModel, onSettingsChange, setApiKey, setModel } from "./settings";
+import { PROVIDERS, detectProvider, getApiKey, getModel, getProvider, onSettingsChange, setApiKey, setModel } from "./settings";
 
-const mask = (k: string) => (k.length > 12 ? `${k.slice(0, 7)}…${k.slice(-4)}` : "••••");
+const mask = (k: string) => (k.length > 12 ? `${k.slice(0, 6)}…${k.slice(-4)}` : "••••");
 
-/** 화면 맨 위: Anthropic API 키·모델 설정 (브라우저에만 저장) */
+/** 화면 맨 위: API 키(Claude 또는 Gemini)·모델 설정. 브라우저에만 저장 */
 export default function ApiKeyBar() {
   const [key, setKey] = useState(getApiKey());
-  const [model, setModelState] = useState(getModel());
   const [editing, setEditing] = useState(!getApiKey());
   const [draftKey, setDraftKey] = useState("");
-  const [draftModel, setDraftModel] = useState(getModel());
+  const [draftModel, setDraftModel] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [, force] = useState(0);
 
   useEffect(
     () =>
       onSettingsChange(() => {
         setKey(getApiKey());
-        setModelState(getModel());
+        force((n) => n + 1);
       }),
     [],
   );
+
+  const provider = getProvider();
+  // 입력 중인 키 모양으로 회사를 미리 보여 준다 (비어 있으면 현재 저장된 키 기준)
+  const draftProvider = draftKey.trim() ? detectProvider(draftKey) : key ? provider : null;
 
   if (!editing)
     return (
       <div className="no-print border-b border-[var(--line)] bg-white">
         <div className="mx-auto flex max-w-4xl flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-xs text-[var(--muted)]">
-          <span className="font-semibold text-green-700">● API 키 설정됨</span>
+          <span className="font-semibold text-green-700">● {PROVIDERS[provider].name}</span>
           <span>{mask(key)}</span>
-          <span>모델: {model}</span>
+          <span>모델: {getModel(provider)}</span>
           <button
             type="button"
             className="ml-auto underline"
             onClick={() => {
               setDraftKey("");
-              setDraftModel(model);
+              setDraftModel(getModel(provider));
+              setError(null);
               setEditing(true);
             }}
           >
@@ -48,35 +54,52 @@ export default function ApiKeyBar() {
         className="mx-auto max-w-4xl px-4 py-4 text-sm"
         onSubmit={(e) => {
           e.preventDefault();
-          if (draftKey.trim()) setApiKey(draftKey);
-          setModel(draftModel);
-          if (draftKey.trim() || key) setEditing(false);
+          const newKey = draftKey.trim();
+          if (newKey && !detectProvider(newKey)) {
+            setError("키 모양을 알 수 없습니다. Claude 키는 sk-ant- 로, Google AI Studio(Gemini) 키는 AIza 로 시작합니다.");
+            return;
+          }
+          const p = newKey ? detectProvider(newKey)! : provider;
+          if (newKey) setApiKey(newKey);
+          // 회사가 바뀌었는데 모델 칸이 다른 회사 모델이면 기본값으로
+          const m = draftModel.trim();
+          const fits = p === "gemini" ? m.startsWith("gemini") : m.startsWith("claude");
+          setModel(p, m && fits ? m : PROVIDERS[p].defaultModel);
+          if (newKey || key) setEditing(false);
         }}
       >
-        <p className="font-semibold">Anthropic API 키를 입력하세요</p>
+        <p className="font-semibold">AI API 키를 입력하세요</p>
         <p className="mt-1 text-xs leading-relaxed text-[var(--muted)]">
-          이 파일은 서버 없이 브라우저에서 Claude를 직접 부릅니다. 키는{" "}
-          <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer" className="underline">
-            Anthropic 콘솔
+          이 파일은 서버 없이 브라우저에서 AI를 직접 부릅니다. 둘 중 하나의 키를 넣으세요:{" "}
+          <a href={PROVIDERS.gemini.keyUrl} target="_blank" rel="noreferrer" className="underline">
+            Google AI Studio (Gemini, AIza…)
+          </a>{" "}
+          또는{" "}
+          <a href={PROVIDERS.anthropic.keyUrl} target="_blank" rel="noreferrer" className="underline">
+            Anthropic (Claude, sk-ant-…)
           </a>
-          에서 발급받을 수 있습니다. 입력한 키는 <b>이 브라우저에만</b> 저장되고 api.anthropic.com 으로만 보내집니다. 공용 컴퓨터에서는 다 쓴 뒤
-          &lsquo;키 지우기&rsquo;를 누르세요.
+          . 키는 <b>이 브라우저에만</b> 저장되고 해당 회사 API로만 보내집니다. 공용 기기에서는 다 쓴 뒤 &lsquo;키 지우기&rsquo;를 누르세요.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
           <input
             type="password"
             autoComplete="off"
             value={draftKey}
-            onChange={(e) => setDraftKey(e.target.value)}
-            placeholder={key ? `현재 키 유지 (${mask(key)})` : "sk-ant-..."}
-            className="min-w-64 flex-1 rounded border border-[var(--line)] bg-white px-3 py-1.5"
+            onChange={(e) => {
+              setDraftKey(e.target.value);
+              setError(null);
+              const p = detectProvider(e.target.value);
+              if (p) setDraftModel(getModel(p));
+            }}
+            placeholder={key ? `현재 키 유지 (${mask(key)})` : "AIza… 또는 sk-ant-…"}
+            className="min-w-0 flex-[1_1_16rem] rounded border border-[var(--line)] bg-white px-3 py-1.5"
             aria-label="API 키"
           />
           <input
             value={draftModel}
             onChange={(e) => setDraftModel(e.target.value)}
-            placeholder={DEFAULT_MODEL}
-            className="w-48 rounded border border-[var(--line)] bg-white px-3 py-1.5"
+            placeholder={draftProvider ? PROVIDERS[draftProvider].defaultModel : "모델 (자동)"}
+            className="w-48 min-w-0 flex-[1_1_10rem] rounded border border-[var(--line)] bg-white px-3 py-1.5"
             aria-label="모델"
           />
           <button type="submit" className="rounded bg-[var(--accent)] px-4 py-1.5 font-semibold text-white">
@@ -100,6 +123,8 @@ export default function ApiKeyBar() {
             </>
           )}
         </div>
+        {draftProvider && !error && <p className="mt-2 text-xs text-green-700">✓ {PROVIDERS[draftProvider].name} 키로 인식했습니다.</p>}
+        {error && <p className="mt-2 text-xs font-semibold text-red-600">{error}</p>}
       </form>
     </div>
   );

@@ -12,6 +12,7 @@ import { countWords, splitSentences } from "@/lib/split-sentences";
 import type { Difficulty, QuestionType, SectionKey } from "@/lib/types";
 import { MAX_IMAGES, MAX_UPLOAD_BYTES, SERVER_IMAGE_TYPES, classifyFile, type ServerImageType } from "@/lib/upload";
 import { ApiKeyError } from "./browser-llm";
+import { getProvider } from "./settings";
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string; retryable: boolean; retryAfterSec?: number };
 
@@ -80,8 +81,9 @@ export async function callExtract(form: FormData): Promise<ApiResult<ExtractResp
   }
 }
 
-/** 동시에 limit 개까지만 실행 (API 요청 한도 배려) */
+/** 동시에 limit 개까지만 실행 (API 요청 한도 배려). Gemini 무료 등급은 분당 요청 수가 적어 2개로 줄인다 */
 export async function runPool(tasks: (() => Promise<void>)[], limit = 3): Promise<void> {
+  if (getProvider() === "gemini") limit = Math.min(limit, 2);
   let next = 0;
   const worker = async () => {
     while (next < tasks.length) {

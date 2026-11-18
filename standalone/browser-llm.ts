@@ -1,11 +1,12 @@
 /**
  * HTML 단독 실행판에서 lib/llm.ts 대신 쓰는 모듈.
- * 서버 없이 브라우저에서 Anthropic API를 직접 호출한다 (사용자 본인의 API 키 사용).
+ * 서버 없이 브라우저에서 AI API를 직접 호출한다 (사용자 본인의 API 키 사용).
+ * Claude(Anthropic) 키와 Gemini(Google AI Studio) 키를 모두 지원한다.
  * generateJson 의 동작(JSON 추출 → Zod 검증 → convert → 오류 피드백 재시도)은 서버판과 같다.
  */
 import type { ZodType, ZodTypeDef } from "zod";
 import { OutputRuleError, PassageUnsuitableError } from "@/lib/errors";
-import { getApiKey, getModel } from "./settings";
+import { getApiKey, getModel, getProvider } from "./settings";
 
 export class ApiKeyError extends Error {
   constructor(message: string) {
@@ -22,51 +23,140 @@ type MessageParam = { role: "user" | "assistant"; content: string | ContentBlock
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Messages API 호출. 요청 한도(429)·과부하(529)·일시 오류(5xx)는 기다렸다가 최대 4번 다시 보낸다 */
-async function createMessage(body: { system: string; messages: MessageParam[]; max_tokens: number }): Promise<string> {
-  const key = getApiKey();
-  if (!key) throw new ApiKeyError("Anthropic API 키를 먼저 입력하세요 (화면 맨 위).");
+type CallArgs = { system: string; messages: MessageParam[]; max_tokens: number };
+type HttpFailure = { status: number; message: string; retryAfterSec?: number };
 
+/**
+ * 요청 한 번 보내기 + 일시 오류 재시도.
+ * 요청 한도(429)·과부하(503·529)·서버 오류(5xx)·네트워크 오류는 기다렸다가 최대 4번 다시 보낸다.
+ */
+async function withRetry(send: () => Promise<Response>, parseOk: (json: unknown) => string, parseFail: (res: Response) => Promise<HttpFailure>) {
   for (let attempt = 0; ; attempt++) {
     let res: Response;
     try {
-      res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-api-key": key,
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
-        },
-        body: JSON.stringify({ model: getModel(), ...body }),
-      });
+      res = await send();
     } catch {
       if (attempt < 2) {
         await sleep(2000 * (attempt + 1));
         continue;
       }
-      throw new Error("Anthropic API에 연결하지 못했습니다. 인터넷 연결을 확인하세요.");
+      throw new Error("AI 서버에 연결하지 못했습니다. 인터넷 연결을 확인하세요. (휴대폰 앱의 미리보기 화면이라면 Chrome 등 브라우저에서 파일을 열어 주세요)");
     }
-
-    if (res.ok) {
-      const json = (await res.json()) as { content: { type: string; text?: string }[] };
-      return json.content
-        .filter((b) => b.type === "text")
-        .map((b) => b.text ?? "")
-        .join("");
-    }
-
-    const err = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-    const msg = err?.error?.message ?? `HTTP ${res.status}`;
-    if (res.status === 401 || res.status === 403) throw new ApiKeyError(`API 키가 올바르지 않거나 권한이 없습니다. (${msg})`);
-    if ((res.status === 429 || res.status === 529 || res.status >= 500) && attempt < 4) {
-      const retryAfter = Number(res.headers.get("retry-after"));
-      await sleep((Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 5 * (attempt + 1)) * 1000);
+    if (res.ok) return parseOk(await res.json());
+    const f = await parseFail(res);
+    if ((f.status === 429 || f.status >= 500) && attempt < 4) {
+      await sleep((f.retryAfterSec && f.retryAfterSec > 0 ? Math.min(f.retryAfterSec, 90) : 5 * (attempt + 1)) * 1000);
       continue;
     }
-    if (res.status === 404 && /model/i.test(msg)) throw new ApiKeyError(`모델 이름을 확인하세요: ${getModel()} (${msg})`);
-    throw new Error(`Anthropic API 오류: ${msg}`);
+    return Promise.reject(f);
   }
+}
+
+// ───────── Claude (Anthropic) ─────────
+async function callAnthropic(key: string, model: string, body: CallArgs): Promise<string> {
+  try {
+    return await withRetry(
+      () =>
+        fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01",
+            "anthropic-dangerous-direct-browser-access": "true",
+          },
+          body: JSON.stringify({ model, ...body }),
+        }),
+      (json) =>
+        (json as { content: { type: string; text?: string }[] }).content
+          .filter((b) => b.type === "text")
+          .map((b) => b.text ?? "")
+          .join(""),
+      async (res) => {
+        const err = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+        return { status: res.status, message: err?.error?.message ?? `HTTP ${res.status}`, retryAfterSec: Number(res.headers.get("retry-after")) || undefined };
+      },
+    );
+  } catch (e) {
+    if (e instanceof Error) throw e;
+    const f = e as HttpFailure;
+    if (f.status === 401 || f.status === 403) throw new ApiKeyError(`Claude API 키가 올바르지 않거나 권한이 없습니다. (${f.message})`);
+    if (f.status === 404 && /model/i.test(f.message)) throw new ApiKeyError(`모델 이름을 확인하세요: ${model} (${f.message})`);
+    if (f.status === 429) throw new Error(`Claude 요청 한도를 넘었습니다. 잠시 후 다시 시도하세요. (${f.message})`);
+    throw new Error(`Claude API 오류: ${f.message}`);
+  }
+}
+
+// ───────── Gemini (Google AI Studio) ─────────
+type GeminiPart = { text?: string; thought?: boolean; inlineData?: { mimeType: string; data: string } };
+
+/** 재시도 대화(이전 출력 + 피드백)를 user 한 턴으로 합친다. Gemini 3 의 thought signature 없이도 안전하게 이어 가기 위함 */
+function toGeminiParts(messages: MessageParam[]): GeminiPart[] {
+  const parts: GeminiPart[] = [];
+  messages.forEach((m, i) => {
+    if (i > 0) parts.push({ text: m.role === "assistant" ? "\n\n[당신의 이전 출력]\n" : "\n\n[수정 요청]\n" });
+    const blocks: ContentBlock[] = typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content;
+    for (const b of blocks) parts.push(b.type === "text" ? { text: b.text } : { inlineData: { mimeType: b.source.media_type, data: b.source.data } });
+  });
+  return parts;
+}
+
+async function callGemini(key: string, model: string, body: CallArgs): Promise<string> {
+  try {
+    return await withRetry(
+      () =>
+        fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-goog-api-key": key },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: body.system }] },
+            contents: [{ role: "user", parts: toGeminiParts(body.messages) }],
+            // 생각(thinking) 토큰도 출력 한도에 포함되므로 넉넉히 잡는다
+            generationConfig: { maxOutputTokens: Math.max(body.max_tokens * 2, 16384), responseMimeType: "application/json" },
+          }),
+        }),
+      (json) => {
+        const j = json as { candidates?: { content?: { parts?: GeminiPart[] }; finishReason?: string }[]; promptFeedback?: { blockReason?: string } };
+        if (j.promptFeedback?.blockReason) throw new Error(`Gemini가 요청을 거절했습니다 (${j.promptFeedback.blockReason}).`);
+        const c = j.candidates?.[0];
+        const text = (c?.content?.parts ?? [])
+          .filter((p) => p.text && !p.thought)
+          .map((p) => p.text)
+          .join("");
+        if (!text && c?.finishReason && c.finishReason !== "STOP") throw new OutputRuleError(`응답이 비었습니다 (${c.finishReason}). JSON만 출력하세요.`);
+        return text;
+      },
+      async (res) => {
+        const err = (await res.json().catch(() => null)) as {
+          error?: { message?: string; status?: string; details?: { "@type"?: string; retryDelay?: string }[] };
+        } | null;
+        const delay = err?.error?.details?.find((d) => d["@type"]?.includes("RetryInfo"))?.retryDelay;
+        return {
+          status: res.status,
+          message: `${err?.error?.status ?? ""} ${err?.error?.message ?? `HTTP ${res.status}`}`.trim(),
+          retryAfterSec: delay ? parseFloat(delay) : Number(res.headers.get("retry-after")) || undefined,
+        };
+      },
+    );
+  } catch (e) {
+    if (e instanceof Error) throw e;
+    const f = e as HttpFailure;
+    if (f.status === 403 || /API key not valid|API_KEY_INVALID|PERMISSION_DENIED/i.test(f.message))
+      throw new ApiKeyError(`Gemini API 키가 올바르지 않거나 권한이 없습니다. (${f.message})`);
+    if (f.status === 404) throw new ApiKeyError(`모델 이름을 확인하세요: ${model} (${f.message})`);
+    if (f.status === 429)
+      throw new Error(`Gemini 사용 한도를 넘었습니다. 무료 등급은 분당·하루 요청 수가 제한됩니다. 잠시 후 다시 시도하거나 AI Studio에서 결제를 설정하세요. (${f.message})`);
+    throw new Error(`Gemini API 오류: ${f.message}`);
+  }
+}
+
+/** 설정된 키의 회사(Claude/Gemini)에 맞춰 호출 */
+async function createMessage(body: CallArgs): Promise<string> {
+  const key = getApiKey();
+  if (!key) throw new ApiKeyError("API 키를 먼저 입력하세요 (화면 맨 위).");
+  const provider = getProvider();
+  const model = getModel(provider);
+  return provider === "gemini" ? callGemini(key, model, body) : callAnthropic(key, model, body);
 }
 
 /** 응답 텍스트에서 JSON 객체 부분만 꺼낸다 */
@@ -98,8 +188,9 @@ export async function generateJson<Raw, Out>(opts: GenerateOptions<Raw, Out>): P
   let lastError = "";
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const text = await createMessage({ system, messages, max_tokens: maxTokens });
+    let text = "";
     try {
+      text = await createMessage({ system, messages, max_tokens: maxTokens });
       const parsed = schema.safeParse(extractJson(text));
       if (!parsed.success) {
         const issues = parsed.error.issues.slice(0, 10).map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`);

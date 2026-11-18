@@ -1,24 +1,47 @@
-/** HTML 단독 실행판: API 키·모델을 브라우저에만 저장 */
+/**
+ * HTML 단독 실행판: API 키·모델을 브라우저에만 저장.
+ * 키 모양으로 회사를 알아낸다: "sk-ant-…" → Anthropic(Claude), "AIza…" → Google AI Studio(Gemini)
+ */
 
-const KEY = "suneung-anthropic-api-key";
-const MODEL_KEY = "suneung-anthropic-model";
-export const DEFAULT_MODEL = "claude-sonnet-5-5";
+export type Provider = "anthropic" | "gemini";
+
+export const PROVIDERS: Record<Provider, { name: string; defaultModel: string; keyUrl: string }> = {
+  anthropic: { name: "Claude (Anthropic)", defaultModel: "claude-sonnet-5-5", keyUrl: "https://console.anthropic.com/settings/keys" },
+  gemini: { name: "Gemini (Google AI Studio)", defaultModel: "gemini-3.8-flash", keyUrl: "https://aistudio.google.com/apikey" },
+};
+
+const KEY = "suneung-api-key";
+const LEGACY_KEY = "suneung-anthropic-api-key";
+const modelKey = (p: Provider) => `suneung-model-${p}`;
 
 const listeners = new Set<() => void>();
+let memoryKey = "";
+const memoryModel: Partial<Record<Provider, string>> = {};
+
+/** 키 모양으로 회사 판별. 모르면 null */
+export function detectProvider(key: string): Provider | null {
+  const k = key.trim();
+  if (k.startsWith("sk-ant-")) return "anthropic";
+  if (k.startsWith("AIza")) return "gemini";
+  return null;
+}
 
 export function getApiKey(): string {
   try {
-    return localStorage.getItem(KEY) ?? "";
+    return localStorage.getItem(KEY) ?? localStorage.getItem(LEGACY_KEY) ?? "";
   } catch {
     return memoryKey;
   }
 }
 
-let memoryKey = "";
+export function getProvider(): Provider {
+  return detectProvider(getApiKey()) ?? "anthropic";
+}
 
 export function setApiKey(value: string): void {
   memoryKey = value.trim();
   try {
+    localStorage.removeItem(LEGACY_KEY);
     if (memoryKey) localStorage.setItem(KEY, memoryKey);
     else localStorage.removeItem(KEY);
   } catch {
@@ -27,18 +50,20 @@ export function setApiKey(value: string): void {
   listeners.forEach((l) => l());
 }
 
-export function getModel(): string {
+export function getModel(provider: Provider = getProvider()): string {
   try {
-    return localStorage.getItem(MODEL_KEY) || DEFAULT_MODEL;
+    return localStorage.getItem(modelKey(provider)) || PROVIDERS[provider].defaultModel;
   } catch {
-    return DEFAULT_MODEL;
+    return memoryModel[provider] || PROVIDERS[provider].defaultModel;
   }
 }
 
-export function setModel(value: string): void {
+export function setModel(provider: Provider, value: string): void {
+  const v = value.trim();
+  memoryModel[provider] = v;
   try {
-    if (value.trim() && value.trim() !== DEFAULT_MODEL) localStorage.setItem(MODEL_KEY, value.trim());
-    else localStorage.removeItem(MODEL_KEY);
+    if (v && v !== PROVIDERS[provider].defaultModel) localStorage.setItem(modelKey(provider), v);
+    else localStorage.removeItem(modelKey(provider));
   } catch {
     /* 무시 */
   }

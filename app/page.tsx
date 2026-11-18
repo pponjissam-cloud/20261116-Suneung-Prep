@@ -155,10 +155,10 @@ export default function HomePage() {
                   onChange={(e) => update(c.id, { label: e.target.value })}
                   placeholder={`지문 ${i + 1}`}
                   aria-label="지문 이름"
-                  className="w-40 rounded border border-[var(--line)] px-2 py-1 text-sm"
+                  className="w-28 min-w-0 rounded border border-[var(--line)] px-2 py-1 text-sm sm:w-40"
                 />
-                <span className={`text-sm ${tooShort || tooLong ? "font-semibold text-red-600" : "text-[var(--muted)]"}`}>{words}단어</span>
-                <div className="ml-auto flex gap-1">
+                <span className={`whitespace-nowrap text-sm ${tooShort || tooLong ? "font-semibold text-red-600" : "text-[var(--muted)]"}`}>{words}단어</span>
+                <div className="ml-auto flex shrink-0 gap-1 whitespace-nowrap">
                   <button
                     type="button"
                     disabled={i === 0}

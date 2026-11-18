@@ -6,7 +6,7 @@
  */
 import type { ZodType, ZodTypeDef } from "zod";
 import { OutputRuleError, PassageUnsuitableError } from "@/lib/errors";
-import { getApiKey, getModel, getProvider } from "./settings";
+import { getApiKey, getModel, getProvider, isLegacyGeminiKey } from "./settings";
 
 export class ApiKeyError extends Error {
   constructor(message: string) {
@@ -141,8 +141,14 @@ async function callGemini(key: string, model: string, body: CallArgs): Promise<s
   } catch (e) {
     if (e instanceof Error) throw e;
     const f = e as HttpFailure;
-    if (f.status === 403 || /API key not valid|API_KEY_INVALID|PERMISSION_DENIED/i.test(f.message))
-      throw new ApiKeyError(`Gemini API 키가 올바르지 않거나 권한이 없습니다. (${f.message})`);
+    if (f.status === 401 || f.status === 403 || /API key not valid|API_KEY_INVALID|PERMISSION_DENIED|UNAUTHENTICATED/i.test(f.message)) {
+      const hint = isLegacyGeminiKey(key)
+        ? " AIza로 시작하는 예전 형식 키는 2026년 9월부터 거부됩니다. Google AI Studio(aistudio.google.com/apikey)에서 새 키(AQ.로 시작)를 만들어 화면 맨 위 '변경'에서 바꿔 넣으세요."
+        : /ACCESS_TOKEN_TYPE_UNSUPPORTED/i.test(f.message)
+          ? " 새 키가 아직 활성화되지 않았을 수 있습니다. 몇 분 뒤 다시 시도하거나 AI Studio에서 키를 새로 만들어 보세요."
+          : " 키를 빠짐없이 복사했는지 확인하고, 화면 맨 위 '변경'에서 다시 넣어 주세요.";
+      throw new ApiKeyError(`Gemini API 키가 거부되었습니다.${hint} (${f.message})`);
+    }
     if (f.status === 404) throw new ApiKeyError(`모델 이름을 확인하세요: ${model} (${f.message})`);
     if (f.status === 429)
       throw new Error(`Gemini 사용 한도를 넘었습니다. 무료 등급은 분당·하루 요청 수가 제한됩니다. 잠시 후 다시 시도하거나 AI Studio에서 결제를 설정하세요. (${f.message})`);

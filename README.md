@@ -42,7 +42,7 @@
 [`dist/suneung-analyzer.html`](dist/suneung-analyzer.html) 파일을 내려받아 **더블클릭**하면 브라우저(Chrome·Edge 권장)에서 바로 실행됩니다.
 
 1. 처음 열면 맨 위에 **API 키** 입력칸이 나옵니다. 아래 둘 중 하나의 키를 넣으세요. 키 모양으로 자동 인식합니다.
-   - **Google AI Studio (Gemini)**: [aistudio.google.com/apikey](https://aistudio.google.com/apikey)에서 발급, `AIza…`로 시작. 기본 모델 `gemini-3.8-flash`
+   - **Google AI Studio (Gemini)**: [aistudio.google.com/apikey](https://aistudio.google.com/apikey)에서 발급, `AQ.…`로 시작(2026년 5월부터 새로 만드는 인증 키). 기본 모델 `gemini-3.8-flash`. `AIza…`로 시작하는 예전 표준 키는 2026년 9월부터 Gemini API가 거부하므로 새 키를 만드세요.
    - **Anthropic (Claude)**: [Anthropic 콘솔](https://console.anthropic.com/settings/keys)에서 발급, `sk-ant-…`로 시작. 기본 모델 `claude-sonnet-5-5`
 2. 키는 **그 브라우저에만** 저장되고 해당 회사 API로만 보내집니다. 공용 기기에서는 다 쓴 뒤 '변경 → 키 지우기'를 누르세요.
 3. 나머지 기능(사진·파일 입력, 여러 지문, 인쇄·PDF·Word 저장, 기록)은 서버판과 같습니다.

@@ -171,6 +171,23 @@ export default function ResultView() {
       started: st.length > 0,
     };
   };
+  // 실패했거나(다시 시도 가능한 오류) 결과가 비어 있는 항목 → "실패한 항목 다시 생성"
+  const isMissing = (pid: string, k: TaskKey) => {
+    const r = results[pid];
+    if (!r) return false;
+    if (k.startsWith("q:")) return !r.questions.some((q) => q.type === k.slice(2));
+    return r[RESULT_FIELD[k as SectionKey]] === undefined;
+  };
+  const failed = passages.flatMap((p) =>
+    taskKeys
+      .filter((k) => {
+        const st = statuses[sk(p.id, k)];
+        if (st) return st.state === "error" && st.retryable !== false;
+        return isMissing(p.id, k);
+      })
+      .map((k) => ({ p, k })),
+  );
+  const retryFailed = () => void runPool(failed.map(({ p, k }) => () => runTask(request, p, k)), 4);
   const total = passages.length * taskKeys.length;
   const done = Object.values(statuses).filter((s) => s.state !== "loading").length;
 
@@ -302,6 +319,17 @@ export default function ResultView() {
       {busy && (
         <div className="no-print mt-4 rounded-lg bg-blue-50 px-4 py-2 text-sm">
           생성 중… {done}/{total} 완료. 완료된 섹션부터 볼 수 있습니다. 인쇄·저장은 생성이 끝난 뒤에 하세요.
+        </div>
+      )}
+
+      {!busy && failed.length > 0 && (
+        <div className="no-print mt-4 flex flex-wrap items-center gap-3 rounded-lg bg-red-50 px-4 py-2 text-sm text-red-700">
+          <span>
+            만들지 못한 항목이 {failed.length}개 있습니다{multi ? ` (지문 ${new Set(failed.map((f) => f.p.id)).size}개)` : ""}. API 키 문제였다면 맨 위에서 키를 고친 뒤 누르세요.
+          </span>
+          <button type="button" onClick={retryFailed} className="ml-auto rounded-lg bg-red-600 px-3 py-1.5 font-semibold text-white">
+            실패한 항목 모두 다시 생성
+          </button>
         </div>
       )}
 

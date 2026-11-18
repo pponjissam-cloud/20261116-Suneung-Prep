@@ -12,13 +12,25 @@ import { countWords, splitSentences } from "@/lib/split-sentences";
 import type { Difficulty, QuestionType, SectionKey } from "@/lib/types";
 import { MAX_IMAGES, MAX_UPLOAD_BYTES, SERVER_IMAGE_TYPES, classifyFile, type ServerImageType } from "@/lib/upload";
 import { ApiKeyError } from "./browser-llm";
-import { getProvider } from "./settings";
+import { getProvider, onSettingsChange } from "./settings";
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string; retryable: boolean; retryAfterSec?: number };
 
+/**
+ * 키 오류가 한 번 나면 키를 바꿀 때까지 남은 요청은 보내지 않고 바로 같은 오류를 돌려준다.
+ * (지문이 많을 때 틀린 키로 수십 번 요청하지 않도록)
+ */
+let keyError: string | null = null;
+onSettingsChange(() => {
+  keyError = null;
+});
+
 function toError(e: unknown): { ok: false; error: string; retryable: boolean } {
   if (e instanceof PassageUnsuitableError) return { ok: false, error: e.message, retryable: false };
-  if (e instanceof ApiKeyError) return { ok: false, error: e.message, retryable: true };
+  if (e instanceof ApiKeyError) {
+    keyError = e.message;
+    return { ok: false, error: e.message, retryable: true };
+  }
   if (e instanceof OutputRuleError) return { ok: false, error: "AI 출력 검증에 실패했습니다. 다시 생성해 보세요.", retryable: true };
   console.error(e);
   return { ok: false, error: e instanceof Error ? e.message : "생성 중 오류가 발생했습니다.", retryable: true };
@@ -29,6 +41,7 @@ export async function callAnalyze<T>(
   section: SectionKey | "question",
   body: { passage: string; difficulty: Difficulty; questionType?: QuestionType },
 ): Promise<ApiResult<T>> {
+  if (keyError) return { ok: false, error: keyError, retryable: true };
   const words = countWords(body.passage);
   if (words < MIN_WORDS || words > MAX_WORDS)
     return { ok: false, error: `지문은 영어 ${MIN_WORDS}~${MAX_WORDS}단어여야 합니다 (현재 ${words}단어).`, retryable: false };
@@ -55,6 +68,7 @@ async function toBase64(file: Blob): Promise<string> {
 
 /** 사진·PDF(files) 또는 긴 텍스트(text)에서 지문 목록 추출 (서버판 /api/extract 와 같은 검사) */
 export async function callExtract(form: FormData): Promise<ApiResult<ExtractResponse>> {
+  if (keyError) return { ok: false, error: keyError, retryable: true };
   try {
     const text = form.get("text");
     if (typeof text === "string" && text.trim()) return { ok: true, data: await extractPassages([{ kind: "text", text }]) };

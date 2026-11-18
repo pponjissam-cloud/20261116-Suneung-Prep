@@ -1,6 +1,9 @@
 /**
  * HTML 단독 실행판: API 키·모델을 브라우저에만 저장.
- * 키 모양으로 회사를 알아낸다: "sk-ant-…" → Anthropic(Claude), "AIza…" → Google AI Studio(Gemini)
+ * 키 모양으로 회사를 알아낸다:
+ *   "sk-ant-…" → Anthropic(Claude)
+ *   "AQ.…"(2026년 5월부터 새로 만드는 인증 키), "AIza…"(예전 표준 키) → Google AI Studio(Gemini)
+ * 모양을 모르는 키는 사용자가 회사를 직접 고른다.
  */
 
 export type Provider = "anthropic" | "gemini";
@@ -11,6 +14,7 @@ export const PROVIDERS: Record<Provider, { name: string; defaultModel: string; k
 };
 
 const KEY = "suneung-api-key";
+const PROVIDER_KEY = "suneung-provider";
 const LEGACY_KEY = "suneung-anthropic-api-key";
 const modelKey = (p: Provider) => `suneung-model-${p}`;
 
@@ -22,8 +26,13 @@ const memoryModel: Partial<Record<Provider, string>> = {};
 export function detectProvider(key: string): Provider | null {
   const k = key.trim();
   if (k.startsWith("sk-ant-")) return "anthropic";
-  if (k.startsWith("AIza")) return "gemini";
+  if (k.startsWith("AQ.") || k.startsWith("AIza")) return "gemini";
   return null;
+}
+
+/** 예전 형식(AIza) Gemini 키인지. 2026년 9월부터 Gemini API가 거부한다 */
+export function isLegacyGeminiKey(key: string): boolean {
+  return key.trim().startsWith("AIza");
 }
 
 export function getApiKey(): string {
@@ -34,14 +43,28 @@ export function getApiKey(): string {
   }
 }
 
+let memoryProvider: Provider | null = null;
+
 export function getProvider(): Provider {
-  return detectProvider(getApiKey()) ?? "anthropic";
+  const detected = detectProvider(getApiKey());
+  if (detected) return detected;
+  try {
+    const saved = localStorage.getItem(PROVIDER_KEY);
+    if (saved === "anthropic" || saved === "gemini") return saved;
+  } catch {
+    /* 무시 */
+  }
+  return memoryProvider ?? "gemini";
 }
 
-export function setApiKey(value: string): void {
+/** 키를 저장한다. 모양으로 회사를 알 수 없는 키는 provider 로 회사를 정해 준다 */
+export function setApiKey(value: string, provider?: Provider): void {
   memoryKey = value.trim();
+  memoryProvider = provider ?? null;
   try {
     localStorage.removeItem(LEGACY_KEY);
+    if (provider) localStorage.setItem(PROVIDER_KEY, provider);
+    else localStorage.removeItem(PROVIDER_KEY);
     if (memoryKey) localStorage.setItem(KEY, memoryKey);
     else localStorage.removeItem(KEY);
   } catch {

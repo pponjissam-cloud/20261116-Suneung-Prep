@@ -30,7 +30,12 @@ type HttpFailure = { status: number; message: string; retryAfterSec?: number };
  * 요청 한 번 보내기 + 일시 오류 재시도.
  * 요청 한도(429)·과부하(503·529)·서버 오류(5xx)·네트워크 오류는 기다렸다가 최대 4번 다시 보낸다.
  */
-async function withRetry(send: () => Promise<Response>, parseOk: (json: unknown) => string, parseFail: (res: Response) => Promise<HttpFailure>) {
+async function withRetry(
+  send: () => Promise<Response>,
+  parseOk: (json: unknown) => string,
+  parseFail: (res: Response) => Promise<HttpFailure>,
+  maxRetries = 4,
+) {
   for (let attempt = 0; ; attempt++) {
     let res: Response;
     try {
@@ -44,7 +49,7 @@ async function withRetry(send: () => Promise<Response>, parseOk: (json: unknown)
     }
     if (res.ok) return parseOk(await res.json());
     const f = await parseFail(res);
-    if ((f.status === 429 || f.status >= 500) && attempt < 4) {
+    if ((f.status === 429 || f.status >= 500) && attempt < maxRetries) {
       await sleep((f.retryAfterSec && f.retryAfterSec > 0 ? Math.min(f.retryAfterSec, 90) : 5 * (attempt + 1)) * 1000);
       continue;
     }
@@ -101,7 +106,11 @@ function toGeminiParts(messages: MessageParam[]): GeminiPart[] {
   return parts;
 }
 
-async function callGemini(key: string, model: string, body: CallArgs): Promise<string> {
+/** 이 모델이 지금 혼잡·한도 초과·없음 → 다른 모델로 넘어가도 되는 오류 */
+class GeminiBusyError extends Error {}
+
+/** Gemini 모델 하나로 호출. 혼잡하면 짧게 2번만 다시 해 보고 GeminiBusyError */
+async function callGeminiModel(key: string, model: string, body: CallArgs): Promise<string> {
   try {
     return await withRetry(
       () =>
@@ -137,6 +146,7 @@ async function callGemini(key: string, model: string, body: CallArgs): Promise<s
           retryAfterSec: delay ? parseFloat(delay) : Number(res.headers.get("retry-after")) || undefined,
         };
       },
+      2,
     );
   } catch (e) {
     if (e instanceof Error) throw e;
@@ -149,11 +159,40 @@ async function callGemini(key: string, model: string, body: CallArgs): Promise<s
           : " 키를 빠짐없이 복사했는지 확인하고, 화면 맨 위 '변경'에서 다시 넣어 주세요.";
       throw new ApiKeyError(`Gemini API 키가 거부되었습니다.${hint} (${f.message})`);
     }
-    if (f.status === 404) throw new ApiKeyError(`모델 이름을 확인하세요: ${model} (${f.message})`);
-    if (f.status === 429)
-      throw new Error(`Gemini 사용 한도를 넘었습니다. 무료 등급은 분당·하루 요청 수가 제한됩니다. 잠시 후 다시 시도하거나 AI Studio에서 결제를 설정하세요. (${f.message})`);
+    if (f.status === 404 || f.status === 429 || f.status >= 500) throw new GeminiBusyError(`${model}: ${f.message}`);
     throw new Error(`Gemini API 오류: ${f.message}`);
   }
+}
+
+/** 고른 모델이 혼잡하면 차례로 넘어갈 예비 모델 */
+export const GEMINI_FALLBACKS = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"];
+/** 혼잡했던 모델은 잠시(5분) 뒤로 미룬다 → 남은 요청이 같은 모델에서 시간을 버리지 않게 */
+const COOLDOWN_MS = 5 * 60_000;
+const cooldownUntil = new Map<string, number>();
+
+async function callGemini(key: string, model: string, body: CallArgs): Promise<string> {
+  const chain = [model, ...GEMINI_FALLBACKS.filter((m) => m !== model)];
+  const now = Date.now();
+  const ready = chain.filter((m) => (cooldownUntil.get(m) ?? 0) <= now);
+  const cooling = chain.filter((m) => (cooldownUntil.get(m) ?? 0) > now);
+  const busy: string[] = [];
+  for (const m of [...ready, ...cooling]) {
+    try {
+      const text = await callGeminiModel(key, m, body);
+      cooldownUntil.delete(m);
+      return text;
+    } catch (e) {
+      if (!(e instanceof GeminiBusyError)) throw e;
+      cooldownUntil.set(m, Date.now() + COOLDOWN_MS);
+      busy.push(e.message);
+    }
+  }
+  const quota = busy.some((b) => /RESOURCE_EXHAUSTED|quota/i.test(b));
+  throw new Error(
+    quota
+      ? `Gemini 사용 한도를 넘었습니다 (모델 ${chain.length}개 모두). 무료 등급은 분당·하루 요청 수가 제한됩니다. 잠시 뒤 '실패한 항목 모두 다시 생성'을 누르거나, 하루 한도라면 내일 다시 시도하세요. (${busy.at(-1)})`
+      : `Gemini 모델이 모두 혼잡합니다 (${chain.join(", ")}). 몇 분 뒤 '실패한 항목 모두 다시 생성'을 누르세요. (${busy.at(-1)})`,
+  );
 }
 
 /** 설정된 키의 회사(Claude/Gemini)에 맞춰 호출 */

@@ -103,11 +103,17 @@ export default function ResultView() {
     void runPool(tasks, 4);
   }, [id, runTask]);
 
-  // 진행 중인 작업이 없으면 기록에 저장
+  // 기록에 저장: 생성을 시작하자마자 지문을 저장하고, 결과가 나올 때마다 갱신한다.
+  // (생성 도중 탭을 닫아도 지문은 '최근 생성 기록'에 남고, 빠진 항목만 다시 만들 수 있게)
   const busy = Object.values(statuses).some((s) => s.state === "loading");
   const anyRan = Object.keys(statuses).length > 0;
   useEffect(() => {
-    if (!busy && anyRan && request) saveHistory({ id, request, results, createdAt: createdAt.current });
+    if (!anyRan || !request) return;
+    if (!createdAt.current) createdAt.current = new Date().toISOString();
+    const save = () => saveHistory({ id, request, results, createdAt: createdAt.current });
+    if (!busy) return save();
+    const t = window.setTimeout(save, 800); // 생성 중에는 잦은 저장을 묶어서
+    return () => window.clearTimeout(t);
   }, [busy, anyRan, id, request, results]);
 
   const dateText = new Date(createdAt.current ?? Date.now()).toLocaleDateString("ko-KR");
